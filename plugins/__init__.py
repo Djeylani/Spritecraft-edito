@@ -1,0 +1,3 @@
+"""
+SpriteCraft Editor Plugins
+"""
