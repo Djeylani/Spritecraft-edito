@@ -2,7 +2,8 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QFileDialog, QMessageBox, QColorDialog, 
                           QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QSlider, QPushButton, QGroupBox, 
-                          QDockWidget, QWidget, QFrame, QSizePolicy, QLineEdit)
+                          QDockWidget, QWidget, QFrame, QSizePolicy, QLineEdit, QMenu)
+from PyQt6.QtGui import QIcon, QAction, QImage, QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
 from PyQt6.QtGui import QIcon, QAction, QImage, QPixmap, QPainter, QPen, QColor
 from PyQt6.QtCore import Qt, QPoint, QSize, QRect, QBuffer, pyqtSignal
 import sys
@@ -49,6 +50,11 @@ class EditableLabel(QLabel):
         self._current_rect = QRect()
         self._last_pos = None
         
+        # History for undo/redo
+        self._history = []  # List of previous states (pixmaps)
+        self._history_index = -1  # Current position in history
+        self._max_history = 20  # Maximum number of history states to keep
+        
         # Add welcome text
         self.setText("Welcome to SpriteCraft Editor\nUse File > Open to load an image")
 
@@ -77,6 +83,13 @@ class EditableLabel(QLabel):
         
         # Store unzoomed pixmap for future zoom operations
         self._unzoomed_pixmap = QPixmap(self._working_pixmap)
+        
+        # Clear history when setting a new image
+        self._history = []
+        self._history_index = -1
+        
+        # Add initial state to history
+        self._add_to_history()
         
         # Display the scaled pixmap
         super().setPixmap(scaled_pixmap)
@@ -341,11 +354,69 @@ class EditableLabel(QLabel):
         painter.drawImage(0, 0, self._mask)
         painter.end()
         
+        # Add to history
+        self._add_to_history()
+        
         # Update the display
         super().setPixmap(self._working_pixmap)
         
         # Emit signal that image has been updated
         self.image_updated.emit()
+        
+    def _add_to_history(self):
+        """Add current state to history."""
+        if not self._working_pixmap:
+            return
+            
+        # If we're not at the end of the history, remove future states
+        if self._history_index < len(self._history) - 1:
+            self._history = self._history[:self._history_index + 1]
+            
+        # Add current state to history
+        self._history.append(QPixmap(self._working_pixmap))
+        self._history_index = len(self._history) - 1
+        
+        # Limit history size
+        if len(self._history) > self._max_history:
+            self._history.pop(0)
+            self._history_index -= 1
+            
+    def undo(self):
+        """Undo the last operation."""
+        if self._history_index > 0:
+            self._history_index -= 1
+            self._restore_from_history()
+            return True
+        return False
+            
+    def redo(self):
+        """Redo the previously undone operation."""
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self._restore_from_history()
+            return True
+        return False
+            
+    def _restore_from_history(self):
+        """Restore state from history at current index."""
+        if 0 <= self._history_index < len(self._history):
+            # Restore working pixmap from history
+            self._working_pixmap = QPixmap(self._history[self._history_index])
+            self._unzoomed_pixmap = QPixmap(self._working_pixmap)
+            
+            # Apply current zoom
+            scaled_pixmap = self._working_pixmap.scaled(
+                int(self._working_pixmap.width() * self._zoom_level),
+                int(self._working_pixmap.height() * self._zoom_level),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            # Update display
+            super().setPixmap(scaled_pixmap)
+            
+            # Signal that image has been updated
+            self.image_updated.emit()
         
     def _draw_pixel(self, pos):
         """Draw a pixel at the given position."""
@@ -783,6 +854,9 @@ class SpriteCraftEditor(QMainWindow):
         # Animation frames
         self.frames = []
         self.current_frame = 0
+        
+        # Set up keyboard shortcuts
+        self.setup_shortcuts()
 
         # Set modern dark theme style
         self.setStyleSheet("""
@@ -889,6 +963,9 @@ class SpriteCraftEditor(QMainWindow):
         self.init_ui()
         self.canvas.cropping_finished.connect(self.perform_crop)
         self.canvas.image_updated.connect(self.update_preview)
+        
+        # Set up keyboard shortcuts
+        self.setup_shortcuts()
 
     def init_ui(self):
         # Create main layout
@@ -1622,6 +1699,51 @@ class SpriteCraftEditor(QMainWindow):
             zoom_action = QAction(label, self)
             zoom_action.triggered.connect(lambda checked, f=factor: self.set_default_zoom(f))
             default_zoom_menu.addAction(zoom_action)
+            
+    def setup_shortcuts(self):
+        """Set up keyboard shortcuts."""
+        # Create Edit menu if it doesn't exist
+        edit_menu = None
+        for action in self.menuBar().actions():
+            if action.text() == "Edit":
+                edit_menu = action.menu()
+                break
+                
+        if not edit_menu:
+            edit_menu = self.menuBar().addMenu("Edit")
+        
+        # Add separator before undo/redo
+        edit_menu.addSeparator()
+        
+        # Add undo action
+        undo_action = QAction("Undo", self)
+        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        undo_action.triggered.connect(self.undo_action)
+        edit_menu.addAction(undo_action)
+        
+        # Add redo action
+        redo_action = QAction("Redo", self)
+        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        redo_action.triggered.connect(self.redo_action)
+        edit_menu.addAction(redo_action)
+    
+    def undo_action(self):
+        """Handle undo action."""
+        if hasattr(self.canvas, 'undo'):
+            if self.canvas.undo():
+                self.update_preview()
+                self.statusBar().showMessage("Undo", 2000)
+            else:
+                self.statusBar().showMessage("Nothing to undo", 2000)
+    
+    def redo_action(self):
+        """Handle redo action."""
+        if hasattr(self.canvas, 'redo'):
+            if self.canvas.redo():
+                self.update_preview()
+                self.statusBar().showMessage("Redo", 2000)
+            else:
+                self.statusBar().showMessage("Nothing to redo", 2000)
     
     def reset_layout(self):
         """Reset the UI layout to default."""
