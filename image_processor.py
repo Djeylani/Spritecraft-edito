@@ -1,79 +1,84 @@
 import cv2
 import numpy as np
-import tensorflow as tf
-import tensorflow_hub as hub
 
 class ImageProcessor:
     """Class to handle image processing tasks"""
     def __init__(self):
-        self.model = None
-        self._load_model()
+        pass
 
-    def _load_model(self):
-        """Load the pre-trained DeepLabV3 model"""
+    def remove_background(self, image_array, conservative=False):
+        """Remove background using OpenCV
+        
+        Args:
+            image_array: Input image as numpy array (BGR or BGRA format)
+            conservative: If True, use more conservative settings to preserve foreground
+            
+        Returns:
+            Image with transparent background (BGRA format)
+        """
         try:
-            # Load pre-trained DeepLabV3 model from TensorFlow Hub
-            # Using the quantized version for potentially better performance on CPU
-            model_url = 'https://tfhub.dev/tensorflow/lite-model/deeplabv3/1/default/1'
-            self.model = hub.load(model_url)
-            print("DeepLabV3 model loaded successfully.")
-        except Exception as e:
-            print(f"Error loading DeepLabV3 model: {str(e)}")
-            self.model = None
-
-    def remove_background(self, image_array):
-        """Remove background using DeepLabV3"""
-        if self.model is None:
-            print("DeepLabV3 model not loaded. Cannot perform background removal.")
-            return None
-
-        try:
-            # Convert BGR to RGB (DeepLabV3 expects RGB)
-            rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
-
-            # Preprocess image for the model
-            input_size = (513, 513) # DeepLabV3 input size
-            input_tensor = tf.convert_to_tensor(rgb_image, dtype=tf.float32)
-            input_tensor = tf.expand_dims(input_tensor, 0) # Add batch dimension
-            input_tensor = tf.image.resize(input_tensor, input_size) # Resize
-            input_tensor = input_tensor / 255.0  # Normalize to [0, 1]
-
-            # Get prediction (segmentation mask)
-            # The model returns a dictionary, the mask is under the key 'segmentation_masks'
-            predictions = self.model(input_tensor)
-            segmentation_mask = predictions['segmentation_masks']
-
-            # Post-process the mask
-            # The mask is typically a float32 tensor with values between 0 and 1
-            # We need to threshold it to get a binary mask (background vs foreground)
-            # A common threshold is 0.5, but this might need tuning
-            binary_mask = (segmentation_mask > 0.5)
-            binary_mask = tf.squeeze(binary_mask, axis=0) # Remove batch dimension
-            binary_mask = tf.image.resize(tf.cast(binary_mask, tf.float32), (image_array.shape[0], image_array.shape[1])) # Resize to original image size
-            binary_mask = tf.cast(binary_mask, tf.uint8).numpy() # Convert to uint8 numpy array
-
-            # Create a 4-channel image (RGBA) with transparent background
-            # The mask is 1 channel (height, width, 1)
-            mask_3_channel = cv2.cvtColor(binary_mask, cv2.COLOR_GRAY2BGR) # Convert mask to 3 channels
-
-            # Create the alpha channel from the binary mask
-            alpha_channel = np.squeeze(binary_mask) * 255 # Scale mask to 0-255 for alpha
-            alpha_channel = np.expand_dims(alpha_channel, axis=-1) # Add channel dimension
-
-            # Combine original image (BGR) with the alpha channel
-            # Need to ensure original image is BGR for cv2.merge
-            if image_array.shape[-1] == 3:
-                 b, g, r = cv2.split(image_array)
-            elif image_array.shape[-1] == 4:
-                 b, g, r, _ = cv2.split(image_array) # Discard existing alpha if any
+            # Convert to RGB if needed
+            if image_array.shape[2] == 3:
+                # BGR to RGB
+                rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGR2RGB)
             else:
-                 # Handle other potential channel counts if necessary
-                 return None # Or raise an error
-
-            result = cv2.merge([b, g, r, alpha_channel]) # Merge B, G, R, and Alpha
-
+                # BGRA to RGB (discard alpha)
+                rgb_image = cv2.cvtColor(image_array, cv2.COLOR_BGRA2RGB)
+            
+            # Special handling for white backgrounds
+            # Create a mask for white pixels
+            lower_white = np.array([220, 220, 220])
+            upper_white = np.array([255, 255, 255])
+            white_mask = cv2.inRange(rgb_image, lower_white, upper_white)
+            
+            # Invert to get foreground
+            foreground_mask = cv2.bitwise_not(white_mask)
+            
+            # Apply morphological operations to clean up the mask
+            kernel = np.ones((3,3), np.uint8)
+            foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_OPEN, kernel)
+            foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_CLOSE, kernel)
+            
+            # Find contours in the foreground mask
+            contours, _ = cv2.findContours(foreground_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Create a refined mask
+            refined_mask = np.zeros_like(foreground_mask)
+            
+            if contours:
+                # Sort contours by area (descending)
+                contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                
+                # Take only significant contours
+                significant_contours = []
+                max_area = cv2.contourArea(contours[0])
+                
+                for contour in contours:
+                    area = cv2.contourArea(contour)
+                    # Keep contours that are at least 5% of the largest contour
+                    if area > max_area * 0.05:
+                        significant_contours.append(contour)
+                
+                # Draw all significant contours
+                cv2.drawContours(refined_mask, significant_contours, -1, 255, -1)
+                
+                # Dilate slightly to ensure we don't cut off edges
+                refined_mask = cv2.dilate(refined_mask, kernel, iterations=1)
+            
+            # Create alpha channel (255 for foreground, 0 for background)
+            alpha_channel = refined_mask
+            
+            # Split the original image into channels
+            if image_array.shape[2] == 3:
+                b, g, r = cv2.split(image_array)
+            else:
+                b, g, r, _ = cv2.split(image_array)
+                
+            # Merge with the new alpha channel
+            result = cv2.merge([b, g, r, alpha_channel])
+            
             return result
-
+            
         except Exception as e:
             print(f"Error during background removal processing: {str(e)}")
             return None
