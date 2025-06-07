@@ -63,8 +63,23 @@ class EditableLabel(QLabel):
         
         # Clear text when setting an image
         self.setText("")
-        # Display the pixmap
-        super().setPixmap(pixmap)
+        
+        # Apply default zoom (50%)
+        self._zoom_level = 0.5  # Set default zoom to 50%
+        
+        # Scale the pixmap
+        scaled_pixmap = pixmap.scaled(
+            int(pixmap.width() * self._zoom_level),
+            int(pixmap.height() * self._zoom_level),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        
+        # Store unzoomed pixmap for future zoom operations
+        self._unzoomed_pixmap = QPixmap(self._working_pixmap)
+        
+        # Display the scaled pixmap
+        super().setPixmap(scaled_pixmap)
         self.adjustSize()  # Adjust label size to fit pixmap if needed
     
     def pixmap(self):
@@ -886,6 +901,9 @@ class SpriteCraftEditor(QMainWindow):
         # Create a splitter for main area and preview
         self.main_area = QWidget()
         self.main_area_layout = QVBoxLayout(self.main_area)
+        
+        # Add UI customization menu
+        self.create_ui_customization_menu()
         self.main_area_layout.setContentsMargins(8, 8, 8, 8)
         
         # Create canvas for image editing with pixel grid
@@ -1137,6 +1155,7 @@ class SpriteCraftEditor(QMainWindow):
         palette_dock.setWidget(palette_widget)
         
         # Add palette dock to main window
+        self.palette_dock = palette_dock
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, palette_dock)
         
         # Create menu bar
@@ -1297,7 +1316,7 @@ class SpriteCraftEditor(QMainWindow):
                     QImage.Format.Format_RGBA8888
                 )
                 
-                # Convert to pixmap and display
+                # Convert to pixmap
                 processed_pixmap = QPixmap.fromImage(processed_qimage)
                 
                 # Show preview with option to accept or reject
@@ -1321,7 +1340,30 @@ class SpriteCraftEditor(QMainWindow):
                 
                 # Show the dialog
                 if preview_dialog.exec() == QMessageBox.StandardButton.Apply:
-                    self.canvas.setPixmap(processed_pixmap)
+                    # Store the processed pixmap as both original and working pixmap
+                    self.canvas._pixmap = QPixmap(processed_pixmap)
+                    self.canvas._working_pixmap = QPixmap(processed_pixmap)
+                    self.canvas._unzoomed_pixmap = QPixmap(processed_pixmap)
+                    
+                    # Apply current zoom level
+                    zoom_level = getattr(self.canvas, '_zoom_level', 0.5)
+                    scaled_pixmap = processed_pixmap.scaled(
+                        int(processed_pixmap.width() * zoom_level),
+                        int(processed_pixmap.height() * zoom_level),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    
+                    # Update the display
+                    super(EditableLabel, self.canvas).setPixmap(scaled_pixmap)
+                    
+                    # Update zoom display
+                    if hasattr(self, 'zoom_input'):
+                        self.zoom_input.setText(f"{int(zoom_level * 100)}%")
+                        
+                    # Update preview
+                    self.update_preview()
+                    
                     QMessageBox.information(self, "Success", "Background removed.")
                 else:
                     QMessageBox.information(self, "Cancelled", "Background removal cancelled.")
@@ -1541,6 +1583,74 @@ class SpriteCraftEditor(QMainWindow):
                 self.zoom_input.setText(zoom_text)
             # Apply the zoom
             self.zoom_image(zoom_text)
+    
+    def create_ui_customization_menu(self):
+        """Create a menu for UI customization."""
+        # Create View menu
+        view_menu = self.menuBar().addMenu("View")
+        
+        # Dock widgets visibility submenu
+        docks_menu = view_menu.addMenu("Panels")
+        
+        # Add actions for each dock widget
+        tools_dock_action = QAction("Tools Panel", self)
+        tools_dock_action.setCheckable(True)
+        tools_dock_action.setChecked(True)
+        tools_dock_action.triggered.connect(lambda checked: self.tools_dock.setVisible(checked))
+        docks_menu.addAction(tools_dock_action)
+        
+        # Add action for palette dock
+        palette_dock_action = QAction("Color Palette", self)
+        palette_dock_action.setCheckable(True)
+        palette_dock_action.setChecked(True)
+        palette_dock_action.triggered.connect(lambda checked: self.palette_dock.setVisible(checked))
+        docks_menu.addAction(palette_dock_action)
+        
+        # Layout options
+        layout_menu = view_menu.addMenu("Layout")
+        
+        # Reset layout
+        reset_layout_action = QAction("Reset Layout", self)
+        reset_layout_action.triggered.connect(self.reset_layout)
+        layout_menu.addAction(reset_layout_action)
+        
+        # Default zoom
+        default_zoom_menu = view_menu.addMenu("Default Zoom")
+        
+        zoom_options = [("25%", 0.25), ("50%", 0.5), ("75%", 0.75), ("100%", 1.0), ("150%", 1.5), ("200%", 2.0)]
+        for label, factor in zoom_options:
+            zoom_action = QAction(label, self)
+            zoom_action.triggered.connect(lambda checked, f=factor: self.set_default_zoom(f))
+            default_zoom_menu.addAction(zoom_action)
+    
+    def reset_layout(self):
+        """Reset the UI layout to default."""
+        # Reset dock widget positions
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tools_dock)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.palette_dock)
+        
+        # Show all dock widgets
+        self.tools_dock.setVisible(True)
+        self.palette_dock.setVisible(True)
+        
+        # Reset main layout
+        self.main_layout.setStretch(0, 4)  # Canvas area
+        self.main_layout.setStretch(1, 1)  # Tools area
+        
+    def set_default_zoom(self, factor):
+        """Set the default zoom level."""
+        self.default_zoom = factor
+        
+        # Apply to current image if one is loaded
+        if hasattr(self.canvas, '_pixmap') and self.canvas._pixmap:
+            self.canvas._zoom_level = factor
+            
+            # Update zoom display
+            if hasattr(self, 'zoom_input'):
+                self.zoom_input.setText(f"{int(factor * 100)}%")
+            
+            # Apply zoom
+            self.zoom_image(1.0)  # Apply with factor 1.0 to use the current zoom level
     
     def update_preview(self):
         """Update the preview image."""
