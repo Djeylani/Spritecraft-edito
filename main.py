@@ -439,6 +439,9 @@ class EditableLabel(QLabel):
         painter.drawPoint(pos)
         painter.end()
         
+        # Add to history
+        self._add_to_history()
+        
         # Update the display
         super().setPixmap(self._working_pixmap)
         
@@ -467,6 +470,9 @@ class EditableLabel(QLabel):
         painter.drawLine(start_pos, end_pos)
         painter.end()
         
+        # Add to history
+        self._add_to_history()
+        
         # Update the display
         super().setPixmap(self._working_pixmap)
         
@@ -493,6 +499,9 @@ class EditableLabel(QLabel):
         size = self._brush_size
         painter.drawRect(pos.x() - size//2, pos.y() - size//2, size, size)
         painter.end()
+        
+        # Add to history
+        self._add_to_history()
         
         # Update the display
         super().setPixmap(self._working_pixmap)
@@ -522,6 +531,9 @@ class EditableLabel(QLabel):
         # Draw the line
         painter.drawLine(start_pos, end_pos)
         painter.end()
+        
+        # Add to history
+        self._add_to_history()
         
         # Update the display
         super().setPixmap(self._working_pixmap)
@@ -579,6 +591,9 @@ class EditableLabel(QLabel):
         
         # Update the working pixmap
         self._working_pixmap = QPixmap.fromImage(result_image)
+        
+        # Add to history
+        self._add_to_history()
         
         # Update the display
         super().setPixmap(self._working_pixmap)
@@ -1460,6 +1475,9 @@ class SpriteCraftEditor(QMainWindow):
                 QMessageBox.warning(self, "Warning", "Crop area is invalid!")
                 return
                 
+            # Add current state to history before cropping
+            self.canvas._add_to_history()
+            
             cropped_pixmap = orig_pixmap.copy(crop_rect)
             if not cropped_pixmap.isNull():
                 self.canvas.setPixmap(cropped_pixmap)
@@ -1705,6 +1723,13 @@ class SpriteCraftEditor(QMainWindow):
             
     def setup_shortcuts(self):
         """Set up keyboard shortcuts."""
+        # Create direct keyboard shortcuts
+        undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        undo_shortcut.activated.connect(self.undo_action)
+        
+        redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
+        redo_shortcut.activated.connect(self.redo_action)
+        
         # Create Edit menu if it doesn't exist
         edit_menu = None
         for action in self.menuBar().actions():
@@ -1715,27 +1740,46 @@ class SpriteCraftEditor(QMainWindow):
         if not edit_menu:
             edit_menu = self.menuBar().addMenu("Edit")
         
-        # Add separator before undo/redo
-        edit_menu.addSeparator()
+        # Insert undo/redo at the beginning of the menu
+        first_action = None
+        if edit_menu.actions():
+            first_action = edit_menu.actions()[0]
         
         # Add undo action with icon
         self.undo_action_obj = QAction("Undo", self)
         self.undo_action_obj.setShortcut("Ctrl+Z")
         self.undo_action_obj.triggered.connect(self.undo_action)
-        edit_menu.addAction(self.undo_action_obj)
         
         # Add redo action with icon
         self.redo_action_obj = QAction("Redo", self)
         self.redo_action_obj.setShortcut("Ctrl+Y")
         self.redo_action_obj.triggered.connect(self.redo_action)
-        edit_menu.addAction(self.redo_action_obj)
+        
+        if first_action:
+            edit_menu.insertAction(first_action, self.undo_action_obj)
+            edit_menu.insertAction(first_action, self.redo_action_obj)
+            edit_menu.insertSeparator(first_action)
+        else:
+            edit_menu.addAction(self.undo_action_obj)
+            edit_menu.addAction(self.redo_action_obj)
+            edit_menu.addSeparator()
         
         # Add to toolbar
         toolbar = self.findChild(QToolBar, "Main Toolbar")
         if toolbar:
-            toolbar.addSeparator()
-            toolbar.addAction(self.undo_action_obj)
-            toolbar.addAction(self.redo_action_obj)
+            # Insert at the beginning of the toolbar
+            first_toolbar_action = None
+            if toolbar.actions():
+                first_toolbar_action = toolbar.actions()[0]
+                
+            if first_toolbar_action:
+                toolbar.insertAction(first_toolbar_action, self.redo_action_obj)
+                toolbar.insertAction(first_toolbar_action, self.undo_action_obj)
+                toolbar.insertSeparator(first_toolbar_action)
+            else:
+                toolbar.addAction(self.undo_action_obj)
+                toolbar.addAction(self.redo_action_obj)
+                toolbar.addSeparator()
     
     def undo_action(self):
         """Handle undo action."""
