@@ -2,9 +2,8 @@
 
 from PyQt6.QtWidgets import (QMainWindow, QApplication, QFileDialog, QMessageBox, QColorDialog, 
                           QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QSlider, QPushButton, QGroupBox, 
-                          QDockWidget, QWidget, QFrame, QSizePolicy, QLineEdit, QMenu)
+                          QDockWidget, QWidget, QFrame, QSizePolicy, QLineEdit, QMenu, QToolBar)
 from PyQt6.QtGui import QIcon, QAction, QImage, QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
-from PyQt6.QtGui import QIcon, QAction, QImage, QPixmap, QPainter, QPen, QColor
 from PyQt6.QtCore import Qt, QPoint, QSize, QRect, QBuffer, pyqtSignal
 import sys
 import json
@@ -979,6 +978,9 @@ class SpriteCraftEditor(QMainWindow):
         self.main_area = QWidget()
         self.main_area_layout = QVBoxLayout(self.main_area)
         
+        # Create status bar for messages
+        self.statusBar().showMessage("Ready", 3000)
+        
         # Add UI customization menu
         self.create_ui_customization_menu()
         self.main_area_layout.setContentsMargins(8, 8, 8, 8)
@@ -1286,6 +1288,7 @@ class SpriteCraftEditor(QMainWindow):
         
         # Create toolbar
         toolbar = self.addToolBar("Main Toolbar")
+        toolbar.setObjectName("Main Toolbar")  # Set object name for finding it later
         toolbar.addAction(open_action)
         toolbar.addAction(save_action)
         toolbar.addSeparator()
@@ -1715,17 +1718,24 @@ class SpriteCraftEditor(QMainWindow):
         # Add separator before undo/redo
         edit_menu.addSeparator()
         
-        # Add undo action
-        undo_action = QAction("Undo", self)
-        undo_action.setShortcut(QKeySequence.StandardKey.Undo)
-        undo_action.triggered.connect(self.undo_action)
-        edit_menu.addAction(undo_action)
+        # Add undo action with icon
+        self.undo_action_obj = QAction("Undo", self)
+        self.undo_action_obj.setShortcut("Ctrl+Z")
+        self.undo_action_obj.triggered.connect(self.undo_action)
+        edit_menu.addAction(self.undo_action_obj)
         
-        # Add redo action
-        redo_action = QAction("Redo", self)
-        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
-        redo_action.triggered.connect(self.redo_action)
-        edit_menu.addAction(redo_action)
+        # Add redo action with icon
+        self.redo_action_obj = QAction("Redo", self)
+        self.redo_action_obj.setShortcut("Ctrl+Y")
+        self.redo_action_obj.triggered.connect(self.redo_action)
+        edit_menu.addAction(self.redo_action_obj)
+        
+        # Add to toolbar
+        toolbar = self.findChild(QToolBar, "Main Toolbar")
+        if toolbar:
+            toolbar.addSeparator()
+            toolbar.addAction(self.undo_action_obj)
+            toolbar.addAction(self.redo_action_obj)
     
     def undo_action(self):
         """Handle undo action."""
